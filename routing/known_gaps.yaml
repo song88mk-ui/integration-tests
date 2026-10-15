@@ -1,0 +1,83 @@
+# Routing gaps that are known and accepted, so test_topology.py can gate on new ones.
+#
+# unrouted: a key a deployed producer publishes that no deployed consumer's binding matches.
+#           RabbitMQ drops these messages silently.
+# unbound:  a binding of a deployed consumer that no publisher in the workspace matches.
+#
+# Every entry needs a reason. "envs" limits an entry to some environments (default: all).
+# An entry that no longer matches a gap fails the test as stale, so delete it when it is fixed.
+# A gap that is a defect has its own test in test_topology.py, marked with the ticket.
+# Checked against origin/main on 2026-10-14.
+
+unrouted:
+  r.bet.betstatus:
+    reason: DEVOPS-416. Settlement and Placement publish the bare three-word key; the only binder,
+      Platform.BetStatus.Service, is not deployed, and OE.Websocket binds r.bet.betstatus.*.
+  r.bet.betinfo:
+    reason: Its consumer, Platform.BetInfo.Service, is not deployed.
+  r.oe.marketdeactivation:
+    reason: No consumer anywhere in the workspace.
+  r.oe.sportsbook.*:
+    reason: Platform.Sportsbook.API publishes it; no consumer anywhere in the workspace.
+  r.sb.adapter.*.onbetsettlement:
+    reason: Platform.Sportsbook.API publishes it; no consumer anywhere in the workspace.
+  r.bo.mapping.onbulkupdate:
+    reason: Backoffice.API publishes it; no consumer anywhere in the workspace.
+  r.oe.web.config.OnUpdateClientLeagueConfig:
+    reason: &webconfig Back Office web-config publishes; no consumer anywhere in the workspace.
+  r.oe.web.config.OnUpdateClientMarketConfig:
+    reason: *webconfig
+  r.oe.web.config.onbulkupdateconfig2:
+    reason: *webconfig
+  r.oe.web.config.oncopyclientsettings2:
+    reason: *webconfig
+  r.oe.web.config.ongetmarginspreadsheet3:
+    reason: *webconfig
+  r.of.bet.cancellation:
+    reason: &oddsfeed For the oddsfeed services, whose repo is not in the workspace.
+  r.of.operator.onbetcancellation.*:
+    reason: *oddsfeed
+  r.client.topmarket.placement:
+    envs: [dev]
+    reason: &topmarket Platform.Client.TopMarket is not in the dev helmfile app list.
+  r.client.topmarket.settlement:
+    envs: [dev]
+    reason: *topmarket
+  # Error and health-check keys. Nothing in the workspace consumes them, so they are dropped;
+  # whether anything outside the workspace should is unknown.
+  r.bet.cashout.error:
+    reason: &errorkey Error or health-check key with no consumer in the workspace.
+  r.bet.error.operator:
+    reason: *errorkey
+  r.bet.placement.error:
+    reason: *errorkey
+  r.bg.engine.error:
+    reason: *errorkey
+  r.error.bg.receiver:
+    reason: *errorkey
+  r.error.engine.uof.client:
+    reason: *errorkey
+  r.oe.translation.error:
+    reason: *errorkey
+  r.system.healthcheck:
+    reason: *errorkey
+
+unbound:
+  r.bo.util.#:
+    reason: Backoffice.Utility binds it, but every publish of it is commented out
+      (Backoffice.Utility/Repository/BackofficeRepository.cs).
+  r.oe.bm.engine.notifications:
+    reason: Backoffice.WebSocket.Service binds it, but every publish is commented out.
+  r.oe.mapping.bg.#:
+    reason: BG.Engine.Sportsbook binds it (argocd bg-engine-sportsbook); no publisher in the workspace.
+  r.of.bet.settlement:
+    reason: Published by the oddsfeed services, whose repo is not in the workspace.
+  r.of.recovery.#.g01:
+    envs: [dev]
+    reason: &recovery OE.UOF.Client recovery requests come from the oddsfeed services (not in the workspace).
+  r.of.recovery.#.g02:
+    envs: [stg]
+    reason: *recovery
+  r.of.recovery.#.g00:
+    envs: [prd]
+    reason: *recovery
