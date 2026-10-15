@@ -12,7 +12,7 @@
 # Usage: run.sh [--include-known]
 #        --include-known  a known-defect checker that still fails also fails the run
 #                         (use it to confirm a fix)
-# Env:   SONG88_WORKSPACE  parent of the sibling clones (default: two levels above this folder)
+# Env:   SONG88_WORKSPACE  parent of the sibling clones (default: the parent of this repo)
 #        NUGET_PASSWORD    needed once emitters/checkers reference repos on the private feed
 #        CONTRACT_GIT_REF  routing tests only: read every repo at this ref (e.g. origin/main)
 #                          instead of its working tree
@@ -46,7 +46,7 @@ done
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 sln="$here/harness/ContractTests.sln"
-export SONG88_WORKSPACE="${SONG88_WORKSPACE:-$(cd "$here/../.." && pwd)}"
+export SONG88_WORKSPACE="${SONG88_WORKSPACE:-$(cd "$here/.." && pwd)}"
 export CONTRACT_GOLDEN_DIR="$here/goldens"
 
 echo "== Repos under test (workspace: $SONG88_WORKSPACE)"

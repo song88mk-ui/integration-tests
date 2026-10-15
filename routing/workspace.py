@@ -1,8 +1,7 @@
 """Locate and read the sibling service repos that the contract tests check.
 
-The suite runs from qa-robot-automation/contract-tests, and expects every repo it reads to be
-a sibling clone of qa-robot-automation, the layout checkout-repos.sh produces locally and the
-CI workflow reproduces. SONG88_WORKSPACE overrides the parent directory.
+The suite expects every repo it reads to be a sibling clone of integration-tests, the layout
+checkout-repos.sh produces locally and the CI workflow reproduces. SONG88_WORKSPACE overrides the parent directory.
 
 By default files are read from each clone's working tree. Set CONTRACT_GIT_REF (for example
 origin/main) to read every repo at that ref instead, without touching the clones.
@@ -30,8 +29,8 @@ def workspace_root() -> Path:
     override = os.environ.get("SONG88_WORKSPACE")
     if override:
         return Path(override).resolve()
-    # routing/ -> contract-tests/ -> qa-robot-automation/ -> workspace
-    return Path(__file__).resolve().parents[3]
+    # routing/ -> integration-tests/ -> workspace
+    return Path(__file__).resolve().parents[2]
 
 
 def repo(name: str) -> Path:

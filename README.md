@@ -3,9 +3,6 @@
 Tests the seams between the song88 service repos, which unit tests in any single repo cannot see.
 Tracked in DEVOPS-409, under the integration test programme DEVOPS-413.
 
-This folder is self-contained. It does not use the Robot Framework suites, the root
-`pyproject.toml`, or the root workflows, and none of them use it.
-
 ## Why
 
 odds-engine-2, bet-genius, backoffice-final and platform-final share one RabbitMQ topic exchange,
@@ -53,7 +50,7 @@ OE.Shared is netstandard2.1 on EF Core 3.1, and the other repos are on EF Core 5
 
 ## Run
 
-Every repo read here must be a sibling clone of `qa-robot-automation`, as `checkout-repos.sh`
+Every repo read here must be a sibling clone of `integration-tests`, as `checkout-repos.sh`
 lays them out. Set `SONG88_WORKSPACE` to point somewhere else.
 
 ```bash

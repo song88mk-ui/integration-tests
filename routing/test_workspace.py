@@ -9,5 +9,5 @@ def test_required_repo_is_checked_out(name):
 
     assert (path / ".git").exists(), (
         f"{name} is not checked out at {path}. "
-        f"Clone it next to qa-robot-automation or set SONG88_WORKSPACE (now {workspace_root()})."
+        f"Clone it next to integration-tests or set SONG88_WORKSPACE (now {workspace_root()})."
     )
