@@ -5,7 +5,6 @@ using OE.Shared.Constants;
 using OE.Shared.Data.Sportsbook.MongoDB.Collections;
 using OE.Shared.Enums;
 using OE.Shared.Messages.OutgoingAdapterMessages;
-using OE.Shared.Test;
 using OE.Shared.Utilities;
 using OE.Sportsbook.Service.Repositories;
 using OE.Sportsbook.Service.Telemetry;
@@ -15,7 +14,7 @@ namespace Emit.OddsEngine;
 /// <summary>
 /// Goldens for the OE.Sportsbook.Service publish paths that touch MongoDB first: both
 /// OnBetSettlement builders and both bet stops. Each runs the real public repository method
-/// against a Mongo container and captures what it publishes with OE's FakeMessageBroker.
+/// against a Mongo container and captures what it publishes with FakeMessageBroker (Fakes.cs).
 /// </summary>
 public class SportsbookServiceMongoEmitter(MongoFixture mongo) : IClassFixture<MongoFixture>
 {

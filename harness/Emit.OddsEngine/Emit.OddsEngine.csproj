@@ -6,15 +6,12 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <!-- Parent of the sibling clones. The SONG88_WORKSPACE environment variable overrides it. -->
-    <Song88Workspace Condition="'$(SONG88_WORKSPACE)' != ''">$(SONG88_WORKSPACE)/</Song88Workspace>
-    <Song88Workspace Condition="'$(SONG88_WORKSPACE)' == ''">$(MSBuildThisFileDirectory)../../../</Song88Workspace>
-    <OddsEngineSrc>$(Song88Workspace)odds-engine-2/src/OddsEngine/</OddsEngineSrc>
+    <!-- The deployed image whose assemblies this project compiles and runs against. -->
+    <ContractImage>oev2-sportsbook-service</ContractImage>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.11" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
     <!-- Approved 2026-10-14 for the Mongo-backed publish paths. Same version as
          platform-final's Testcontainers.MsSql (DEVOPS-408). -->
@@ -25,10 +22,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Contracts.Harness\Contracts.Harness.csproj" />
-    <ProjectReference Include="$(OddsEngineSrc)OE.Sportsbook.Service/OE.Sportsbook.Service.csproj" />
-    <!-- FakeMessageBroker and FakeMemCache, the fakes OE's own tests use. -->
-    <ProjectReference Include="$(OddsEngineSrc)OE.Shared.Test/OE.Shared.Test.csproj" />
   </ItemGroup>
+
+  <Import Project="..\ImageReferences.props" />
 
   <ItemGroup>
     <Using Include="Xunit" />

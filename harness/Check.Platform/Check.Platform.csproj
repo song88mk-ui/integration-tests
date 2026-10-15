@@ -6,9 +6,8 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <!-- Parent of the sibling clones. The SONG88_WORKSPACE environment variable overrides it. -->
-    <Song88Workspace Condition="'$(SONG88_WORKSPACE)' != ''">$(SONG88_WORKSPACE)/</Song88Workspace>
-    <Song88Workspace Condition="'$(SONG88_WORKSPACE)' == ''">$(MSBuildThisFileDirectory)../../../</Song88Workspace>
+    <!-- The deployed image whose assemblies this project compiles and runs against. -->
+    <ContractImage>platform-cashoutstake-service</ContractImage>
   </PropertyGroup>
 
   <ItemGroup>
@@ -20,10 +19,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Contracts.Harness\Contracts.Harness.csproj" />
-    <ProjectReference Include="$(Song88Workspace)platform-final/Platform/Platform.Shared/Platform.Shared.csproj" />
-    <!-- OnExternalOddsChangeMessage and OnExternalBetSettlementMessage live in the service itself. -->
-    <ProjectReference Include="$(Song88Workspace)platform-final/Platform/Platform.CashOutStake.Servicev2/Platform.CashOutStake.Servicev2.csproj" />
   </ItemGroup>
+
+  <Import Project="..\ImageReferences.props" />
 
   <ItemGroup>
     <Using Include="Xunit" />

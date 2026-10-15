@@ -1,0 +1,28 @@
+<Project>
+
+  <!--
+    Compile and run against one deployed image instead of a source clone. A project sets
+    ContractImage (the ECR/GHCR image name) and imports this file. Every assembly in that
+    image's /app, as scripts/pull_images.py extracts it to .images/<env>/<image>/, is
+    referenced, so the code under test is exactly what that environment runs.
+
+    run.sh passes ContractImagesDir for the environment under test; a plain build uses dev.
+  -->
+  <PropertyGroup>
+    <ContractImagesDir Condition="'$(ContractImagesDir)' == ''">$(MSBuildThisFileDirectory)../.images/dev/</ContractImagesDir>
+    <ContractImagesDir>$([MSBuild]::EnsureTrailingSlash('$(ContractImagesDir)'))</ContractImagesDir>
+    <ContractImageDir>$(ContractImagesDir)$(ContractImage)/</ContractImageDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Every service image runs on Microsoft.AspNetCore.App, so its assemblies may need it. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <Reference Include="$(ContractImageDir)*.dll" Private="true" />
+  </ItemGroup>
+
+  <Target Name="CheckContractImage" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(ContractImageDir)')"
+           Text="$(ContractImage) is not extracted at $(ContractImageDir). Run run.sh, or scripts/pull_images.py." />
+  </Target>
+
+</Project>

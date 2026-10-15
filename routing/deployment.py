@@ -1,6 +1,7 @@
 """Which services run in each environment, and what each one binds on e.central.
 
-Everything is derived from the repos, nothing is listed by hand:
+Everything is derived from the deployment config and the deployed images, nothing is listed
+by hand:
 
 1. infrastructure/helmfile/helmfile.yaml.gotmpl lists the argocd-apps releases. "dev" installs
    the releases named *-dev; "stg" and "prd" install the others. Each release's values files
@@ -8,17 +9,18 @@ Everything is derived from the repos, nothing is listed by hand:
    with "apps:" replaces the common one).
 2. Each app's argocd values files, merged in the order
    infrastructure/helmfile/charts/argocd-apps/templates/applications.yaml gives them, provide
-   the image and the env block.
-3. Each .NET repo's .github/workflows/ci.yml matrix maps the image to its project folder.
-4. The project's appsettings.json, overlaid with the env block (A__B is config key A:B), gives
-   the effective MessageBroker:RoutingKey ("|"-separated) and MessageBroker:Queue.
+   the image, the tag ArgoCD Image Updater pinned, and the env block.
+3. The image's own appsettings.json (/app in the image), overlaid with the env block (A__B is
+   config key A:B), gives the effective MessageBroker:RoutingKey ("|"-separated) and
+   MessageBroker:Queue.
 
 This is the declared state in git, not what is running: an app the helmfile lists but nobody
 has applied yet still counts as deployed. On 2026-10-14 client-topmarket-service was in the
 helmfile for stg and prd but had no ArgoCD Application in either cluster.
 
-A service consumes from e.central if its own project code subscribes (MessageReceived += on
+A service consumes from e.central if its own entry assembly subscribes (MessageReceived += on
 the shared broker, or consumer.Received += on its own channel, as BG.Engine.Sportsbook does).
+Scan.Assemblies reads that from the IL.
 """
 
 import json
@@ -28,10 +30,17 @@ from functools import cache
 
 import yaml
 
-import workspace
+import sources
 
 ENVIRONMENTS = ("dev", "stg", "prd")
-DOTNET_REPOS = ("backoffice-final", "bet-genius", "odds-engine-2", "platform-final")
+# Images built by odds-engine-2, bet-genius, backoffice-final and platform-final: the ones
+# pull_images.py extracts. The prefix alone is not enough, as other repos use it too.
+DOTNET_PREFIXES = ("platform-", "oev2-", "backoffice-", "bg-")
+NON_DOTNET_IMAGES = {
+    "platform-auth-api",  # Auth
+    "platform-song88", "platform-web", "platform-web-af", "platform-web-assets",  # platform-web
+    "platform-webprops-api",  # webprops-api (Go)
+}
 HELMFILE = "helmfile/helmfile.yaml.gotmpl"
 
 
@@ -53,30 +62,15 @@ def deep_merge(base: dict, overlay: dict) -> dict:
 
 
 def load_yaml(name: str, path: str, env: str) -> dict:
-    text = workspace.read(name, path)
+    text = sources.read(name, path)
     if text is None:
         return {}
     documents = [d for d in yaml.safe_load_all(render(text, env)) if d]
     return documents[0] if documents else {}
 
 
-@dataclass(frozen=True)
-class Image:
-    repo: str
-    project: str  # folder of the .csproj, relative to the repo root
-
-
-@cache
-def images() -> dict[str, Image]:
-    """ECR image name -> project, from each .NET repo's ci.yml build matrix."""
-    found = {}
-    for name in DOTNET_REPOS:
-        text = workspace.read(name, ".github/workflows/ci.yml") or ""
-        prefix = re.search(r"file:\s*(\S*?)\$\{\{\s*matrix\.app\.path\s*\}\}/Dockerfile", text)
-        root = prefix.group(1) if prefix else ""
-        for path, image in re.findall(r"-\s*path:\s*(\S+)\s+image:\s*(\S+)", text):
-            found[image] = Image(name, root + path)
-    return found
+def is_dotnet(image: str) -> bool:
+    return image.startswith(DOTNET_PREFIXES) and image not in NON_DOTNET_IMAGES
 
 
 @dataclass
@@ -85,7 +79,8 @@ class Service:
     app: str
     namespace: str
     image: str
-    project: Image | None
+    repository: str
+    tag: str | None
     config: dict = field(repr=False)
 
     @property
@@ -98,16 +93,12 @@ class Service:
         return (self.config.get("MessageBroker") or {}).get("Queue")
 
     @property
+    def extracted(self) -> bool:
+        return sources.image_dir(self.env, self.image) is not None
+
+    @property
     def consumes(self) -> bool:
-        return self.project is not None and _subscribes(self.project.repo, self.project.project)
-
-
-@cache
-def _subscribes(name: str, project: str) -> bool:
-    return any(
-        path.startswith(project + "/")
-        for path in workspace.grep_files(name, r"Received\s*\+=", "*.cs")
-    )
+        return bool((sources.scan(self.env).get(self.image) or {}).get("subscribes"))
 
 
 def _env_to_config(env_block: dict) -> dict:
@@ -121,10 +112,8 @@ def _env_to_config(env_block: dict) -> dict:
     return config
 
 
-def _appsettings(image: Image | None) -> dict:
-    if image is None:
-        return {}
-    text = workspace.read(image.repo, f"{image.project}/appsettings.json")
+def _appsettings(env: str, image: str) -> dict:
+    text = sources.read_image(env, image, "appsettings.json")
     if not text:
         return {}
     # A few files carry // comments, which strict JSON rejects.
@@ -133,7 +122,7 @@ def _appsettings(image: Image | None) -> dict:
 
 
 def _releases(env: str) -> list[dict]:
-    helmfile = [d for d in yaml.safe_load_all(render(workspace.read("infrastructure", HELMFILE), env)) if d]
+    helmfile = [d for d in yaml.safe_load_all(render(sources.read("infrastructure", HELMFILE), env)) if d]
     releases = next(d["releases"] for d in helmfile if "releases" in d)
     wanted = [r for r in releases if r.get("chart") == "charts/argocd-apps"]
     if env == "dev":
@@ -142,7 +131,9 @@ def _releases(env: str) -> list[dict]:
 
 
 @cache
-def services(env: str) -> tuple[Service, ...]:
+def services(env: str, with_config: bool = True) -> tuple[Service, ...]:
+    """Every app deployed in env. with_config=False skips appsettings.json, for resolving
+    which images to pull before any is extracted."""
     found = []
     for release in _releases(env):
         values: dict = {}
@@ -164,9 +155,11 @@ def services(env: str) -> tuple[Service, ...]:
             repository = (merged.get("image") or {}).get("repository") or ""
             image = repository.rsplit("/", 1)[-1] or app.get("appImageOverride") \
                 or f"{values.get('appPrefix')}-{config_dir}"
-            project = images().get(image)
-            config = deep_merge(_appsettings(project), _env_to_config(merged.get("env")))
-            found.append(Service(env, app["name"], values.get("namespace"), image, project, config))
+            tag = (merged.get("image") or {}).get("tag")
+            appsettings = _appsettings(env, image) if with_config else {}
+            config = deep_merge(appsettings, _env_to_config(merged.get("env")))
+            found.append(Service(env, app["name"], values.get("namespace"), image, repository,
+                                 None if tag is None else str(tag), config))
     return tuple(found)
 
 

@@ -2,12 +2,12 @@
 #
 # unrouted: a key a deployed producer publishes that no deployed consumer's binding matches.
 #           RabbitMQ drops these messages silently.
-# unbound:  a binding of a deployed consumer that no publisher in the workspace matches.
+# unbound:  a binding of a deployed consumer that no deployed image publishes.
 #
 # Every entry needs a reason. "envs" limits an entry to some environments (default: all).
 # An entry that no longer matches a gap fails the test as stale, so delete it when it is fixed.
 # A gap that is a defect has its own test in test_topology.py, marked with the ticket.
-# Checked against origin/main on 2026-10-14.
+# Checked against the dev images on 2026-10-15.
 
 unrouted:
   r.bet.betstatus:
@@ -43,21 +43,26 @@ unrouted:
   r.client.topmarket.settlement:
     envs: [dev]
     reason: *topmarket
-  # Error and health-check keys. Nothing in the workspace consumes them, so they are dropped;
-  # whether anything outside the workspace should is unknown.
+  # Error and health-check keys. No deployed image consumes them, so they are dropped; whether
+  # anything outside the workspace should is unknown. GM-960 moved the OE and BG error keys
+  # under r.error.# so one binding can collect them all; nothing binds it yet.
   r.bet.cashout.error:
     reason: &errorkey Error or health-check key with no consumer in the workspace.
   r.bet.error.operator:
     reason: *errorkey
   r.bet.placement.error:
     reason: *errorkey
-  r.bg.engine.error:
+  r.error.bg.engine:
     reason: *errorkey
   r.error.bg.receiver:
     reason: *errorkey
   r.error.engine.uof.client:
     reason: *errorkey
-  r.oe.translation.error:
+  r.error.oe.adapter:
+    reason: *errorkey
+  r.error.oe.translation:
+    reason: *errorkey
+  r.error.oe.translation.job:
     reason: *errorkey
   r.system.healthcheck:
     reason: *errorkey

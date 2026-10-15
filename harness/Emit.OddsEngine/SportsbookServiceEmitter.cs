@@ -5,7 +5,6 @@ using Microsoft.Extensions.Logging.Abstractions;
 using OE.Shared.Constants;
 using OE.Shared.Messages.OutgoingAdapterMessages;
 using OE.Shared.Messages.OutgoingSportsbookMessages;
-using OE.Shared.Test;
 using OE.Shared.Utilities;
 using OE.Sportsbook.Service.Repositories;
 using OE.Sportsbook.Service.Telemetry;

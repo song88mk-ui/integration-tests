@@ -1,21 +1,30 @@
 #!/usr/bin/env bash
-# Runs the cross-repo contract tests (DEVOPS-409) against the sibling clones.
+# Runs the cross-repo contract tests (DEVOPS-409) against the images deployed in one
+# environment. No service repo is cloned: the code under test is the deployed images' /app.
 #
-#   1. Report which commit of each sibling repo is under test.
-#   2. Build and test the .NET harness. Emitters write goldens to $CONTRACT_GOLDEN_DIR from
-#      the real producer code path; checkers then read them into each consumer's own class.
-#   3. Run every known-defect checker, one ticket at a time, and report which now pass.
+#   1. Pull every .NET image the environment runs, at the tag ArgoCD pins, and copy its /app
+#      into .images/<env>/ (scripts/pull_images.py). argocd and infrastructure are read through
+#      the GitHub API.
+#   2. Build the .NET harness against those assemblies, and scan them for what each image
+#      publishes and subscribes to (Scan.Assemblies, for the routing tests).
+#   3. Test the harness. Emitters write goldens to $CONTRACT_GOLDEN_DIR from the real producer
+#      code path; checkers then read them into each consumer's own class.
+#   4. Run every known-defect checker, one ticket at a time, and report which now pass.
 #      This pass never fails the run unless --include-known is given.
-#   4. Run the routing topology tests (pytest, through uv). Their known defects are xfail
+#   5. Run the routing topology tests (pytest, through uv). Their known defects are xfail
 #      tests; any that now pass are reported the same way.
 #
-# Usage: run.sh [--include-known]
+# Usage: run.sh [--env dev|stg|prd] [--no-pull] [--tag IMAGE=TAG]... [--include-known]
+#        --env            the environment whose deployed images are tested (default dev)
+#        --no-pull        reuse what .images/<env>/ already holds (offline re-runs)
+#        --tag            test this tag of an image instead of the one ArgoCD pins
 #        --include-known  a known-defect checker that still fails also fails the run
 #                         (use it to confirm a fix)
-# Env:   SONG88_WORKSPACE  parent of the sibling clones (default: the parent of this repo)
-#        NUGET_PASSWORD    needed once emitters/checkers reference repos on the private feed
-#        CONTRACT_GIT_REF  routing tests only: read every repo at this ref (e.g. origin/main)
-#                          instead of its working tree
+# Env:   CONTRACT_REGISTRY        registry holding the images (default ghcr.io/flyingcockatoo)
+#        CONTRACT_REGISTRY_TOKEN  token to log in with (for ghcr.io, a GitHub token with
+#                                 read:packages); unset means docker is already logged in
+#        CONTRACT_CONFIG_REF      argocd/infrastructure ref to read (default main)
+#        gh must be authenticated: argocd and infrastructure are read through the GitHub API.
 set -euo pipefail
 
 # MSBuild worker nodes that outlive a build keep the stdout pipe of $(dotnet test ...) open,
@@ -37,46 +46,54 @@ dotnet_retry() {
 }
 
 include_known=0
-for arg in "$@"; do
-    case "$arg" in
+pull=1
+env=dev
+pull_args=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
         --include-known) include_known=1 ;;
-        *) echo "Unknown argument: $arg" >&2; exit 2 ;;
+        --no-pull) pull=0 ;;
+        --env) env="${2:?--env needs dev, stg or prd}"; shift ;;
+        --tag) pull_args+=(--tag "${2:?--tag needs IMAGE=TAG}"); shift ;;
+        *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
+    shift
 done
+case "$env" in
+    dev|stg|prd) ;;
+    *) echo "--env must be dev, stg or prd, not $env" >&2; exit 2 ;;
+esac
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 sln="$here/harness/ContractTests.sln"
-export SONG88_WORKSPACE="${SONG88_WORKSPACE:-$(cd "$here/.." && pwd)}"
+images="$here/.images/$env"
+registry="${CONTRACT_REGISTRY:-ghcr.io/flyingcockatoo}"
 export CONTRACT_GOLDEN_DIR="$here/goldens"
+export CONTRACT_ENVS="$env"
+cd "$here"
 
-echo "== Repos under test (workspace: $SONG88_WORKSPACE)"
-for name in argocd backoffice-final bet-genius infrastructure odds-engine-2 platform-final; do
-    dir="$SONG88_WORKSPACE/$name"
-    if [[ ! -d "$dir/.git" ]]; then
-        echo "   $name: MISSING"
-        continue
+echo "== Images under test ($env)"
+if [[ $pull -eq 1 ]]; then
+    if [[ -n "${CONTRACT_REGISTRY_TOKEN:-}" ]]; then
+        # Any non-empty user name works with a GitHub token on ghcr.io.
+        docker login "${registry%%/*}" -u token --password-stdin <<<"$CONTRACT_REGISTRY_TOKEN" >/dev/null
     fi
-    branch="$(git -C "$dir" branch --show-current)"
-    commit="$(git -C "$dir" rev-parse --short HEAD)"
-    note=""
-    [[ "$branch" != "main" ]] && note="   <-- not main; results describe this branch"
-    behind="$(git -C "$dir" rev-list --count HEAD..origin/main 2>/dev/null || echo 0)"
-    [[ "$behind" -gt 0 ]] && note="$note   <-- $behind commit(s) behind origin/main (as of the last fetch)"
-    echo "   $name: $branch @ $commit$note"
-done
+    uv run --frozen python scripts/pull_images.py --env "$env" --registry "$registry" "${pull_args[@]}"
+elif [[ ! -f "$images/manifest.json" ]]; then
+    echo "--no-pull, but $images/manifest.json does not exist. Run once without --no-pull." >&2
+    exit 1
+else
+    uv run --frozen python scripts/pull_images.py --env "$env" --show
+fi
 
 echo "== .NET harness"
-# A sibling repo's project in the solution would make the gating pass run that repo's own
-# test suite. Plain `dotnet sln add` does this; see the README.
-if grep -qE '"\.\.[\\/]' "$sln"; then
-    echo "ContractTests.sln contains a project outside harness/. Remove it:" >&2
-    grep -E '"\.\.[\\/]' "$sln" | cut -d'"' -f6 >&2
-    exit 1
-fi
 # Goldens from an earlier run must never satisfy a checker.
 rm -rf "$CONTRACT_GOLDEN_DIR"
 mkdir -p "$CONTRACT_GOLDEN_DIR"
-dotnet_retry build "$sln" -c Release --disable-build-servers
+# ContractImagesDir points every harness project at this environment's extracted images.
+dotnet_retry build "$sln" -c Release --disable-build-servers -p:ContractImagesDir="$images/"
+echo "== Scanning image assemblies"
+dotnet_retry "$here/harness/Scan.Assemblies/bin/Release/net10.0/Scan.Assemblies.dll" "$images" > /dev/null
 # Separate passes: dotnet test runs projects in parallel, and every golden must exist before
 # any checker reads one. Emitters carry [Trait("Category", "Emit")]; known-defect checkers
 # carry Category=KnownDefect and run in the next step instead.
@@ -117,8 +134,7 @@ for ticket in "${tickets[@]}"; do
     fi
 done
 
-echo "== Routing topology"
-cd "$here"
+echo "== Routing topology ($env)"
 routing_log="$(mktemp)"
 pytest_args=(-rxX)
 # --runxfail runs the xfail-marked known defects as ordinary tests, so a failing one fails.

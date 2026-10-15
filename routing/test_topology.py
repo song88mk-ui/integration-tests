@@ -12,9 +12,11 @@ import yaml
 
 import deployment
 import publishers
+import sources
 from topic import binding_matches
 
-ENVIRONMENTS = deployment.ENVIRONMENTS
+# Only the environments whose images run.sh extracted (run.sh --env).
+ENVIRONMENTS = sources.environments()
 GAPS = yaml.safe_load((Path(__file__).parent / "known_gaps.yaml").read_text())
 
 
@@ -22,7 +24,7 @@ def _allowed(section: str, env: str) -> dict[str, str]:
     return {
         key: entry["reason"]
         for key, entry in (GAPS.get(section) or {}).items()
-        if env in entry.get("envs", ENVIRONMENTS)
+        if env in entry.get("envs", deployment.ENVIRONMENTS)
     }
 
 
@@ -51,33 +53,26 @@ def test_deployment_model_finds_known_consumers(env):
     assert consumers["adapter-service"].queue == "q.oe.adapter"
 
 
-def test_every_deployed_dotnet_service_maps_to_a_project():
-    unmapped = sorted({
-        f"{s.env}/{s.app} ({s.image})"
-        for env in ENVIRONMENTS for s in deployment.services(env)
-        if s.project is None and s.image.split("-")[0] in ("platform", "oev2", "backoffice", "bg")
-        and s.image not in NON_DOTNET_IMAGES
+@pytest.mark.parametrize("env", ENVIRONMENTS)
+def test_every_deployed_dotnet_image_is_extracted(env):
+    scans = sources.scan(env)
+    missing = sorted({
+        f"{s.app} ({s.image})" for s in deployment.services(env)
+        if deployment.is_dotnet(s.image) and not (s.extracted and (scans.get(s.image) or {}).get("entry"))
     })
-    assert not unmapped, _report("Deployed images with no ci.yml matrix entry:", unmapped)
+    assert not missing, _report(f"[{env}] Deployed .NET images not extracted or with no entry assembly:", missing)
 
 
-# Built outside the four .NET repos this suite reads.
-NON_DOTNET_IMAGES = {
-    "platform-auth-api",  # Auth
-    "platform-song88", "platform-web", "platform-web-af", "platform-web-assets",  # platform-web
-    "platform-webprops-api",  # webprops-api (Go)
-}
+@pytest.mark.parametrize("env", ENVIRONMENTS)
+def test_publisher_extraction_finds_known_publications(env):
+    keys = {(p.image, p.key) for p in publishers.publications(env)}
 
-
-def test_publisher_extraction_finds_known_publications():
-    keys = {(p.repo, p.key) for p in publishers.publications()}
-
-    assert ("odds-engine-2", "r.oe.sb.engine.onoddschange") in keys  # MessageType resolved
-    assert ("bet-genius", "r.bg.receiver.onfixturechange") in keys  # OE.Shared constants
-    assert ("platform-final", "r.bet.betstatus.*") in keys  # interpolated client code
-    assert ("backoffice-final", "r.uof.onbetsettlement") in keys  # RabbitMQ.API gateway DTO
-    assert not any(p.key == "r.bet.operator.cashout.*" for p in publishers.publications()), \
-        "commented-out publish counted"
+    assert ("oev2-sportsbook-service", "r.oe.sb.engine.onoddschange") in keys  # MessageType resolved
+    assert ("bg-receiver-service", "r.bg.receiver.onfixturechange") in keys  # OE.Shared constants
+    assert ("platform-placement-service", "r.bet.betstatus.*") in keys  # interpolated client code
+    assert ("backoffice-bo-api", "r.uof.onbetsettlement") in keys  # RabbitMQ.API gateway DTO
+    # A variable assigned on two branches is unknown, not its last value.
+    assert ("platform-sportsbook-api", "r.oe.sportsbook.*") in keys
 
 
 # --- The topology.
@@ -107,7 +102,7 @@ def test_every_binding_has_a_publisher(env):
     new = sorted(f"{b}  ({', '.join(sorted(apps))})" for b, apps in unbound.items() if b not in allowed)
     stale = sorted(allowed.keys() - unbound.keys())
 
-    assert not new, _report(f"[{env}] Bound, but nothing in the workspace publishes it:", new)
+    assert not new, _report(f"[{env}] Bound, but no deployed image publishes it:", new)
     assert not stale, _report(f"[{env}] known_gaps.yaml unbound entries no longer unbound:", stale)
 
 
@@ -125,7 +120,8 @@ def test_known_defect_DEVOPS_440_adapter_receives_translation_changes(env):
     assert "adapter-service" in _receivers(env, "r.oe.ontranslationchange")
 
 
-@pytest.mark.xfail(reason="GM-960", strict=False)
+# Was the GM-960 known defect: UOF.Client's r.oe.adapter.#.# caught the Adapter's errors. The
+# error keys moved under r.error.# (odds-engine-2 #101), so this now guards against a regression.
 @pytest.mark.parametrize("env", ENVIRONMENTS)
-def test_known_defect_GM_960_uof_client_ignores_adapter_errors(env):
-    assert not [app for app in _receivers(env, "r.oe.adapter.error") if app.startswith("uof-client")]
+def test_uof_client_ignores_adapter_errors(env):
+    assert not [app for app in _receivers(env, "r.error.oe.adapter") if app.startswith("uof-client")]
