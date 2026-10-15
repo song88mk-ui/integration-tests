@@ -12,6 +12,6 @@ public sealed class GoldenFactAttribute : FactAttribute
     public GoldenFactAttribute()
     {
         if (GoldenStore.FromEnvironment() is null)
-            Skip = $"{GoldenStore.DirectoryVariable} is not set; run contract-tests/run.sh.";
+            Skip = $"{GoldenStore.DirectoryVariable} is not set; run run.sh.";
     }
 }

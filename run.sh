@@ -9,7 +9,7 @@
 #   4. Run the routing topology tests (pytest, through uv). Their known defects are xfail
 #      tests; any that now pass are reported the same way.
 #
-# Usage: contract-tests/run.sh [--include-known]
+# Usage: run.sh [--include-known]
 #        --include-known  a known-defect checker that still fails also fails the run
 #                         (use it to confirm a fix)
 # Env:   SONG88_WORKSPACE  parent of the sibling clones (default: two levels above this folder)

@@ -32,7 +32,7 @@ public sealed class KnownDefectFactAttribute : FactAttribute, ITraitAttribute
         if (Environment.GetEnvironmentVariable(IncludeVariable) != "1")
             Skip = $"Known defect {ticket}. Set {IncludeVariable}=1 to run it.";
         else if (GoldenStore.FromEnvironment() is null)
-            Skip = $"{GoldenStore.DirectoryVariable} is not set; run contract-tests/run.sh.";
+            Skip = $"{GoldenStore.DirectoryVariable} is not set; run run.sh.";
     }
 
     public string Ticket { get; }
