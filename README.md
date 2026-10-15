@@ -63,7 +63,7 @@ project could not reference them all: the images carry EF Core 3.1, 5, 8 and 10,
 ## Run
 
 ```bash
-export CONTRACT_REGISTRY_TOKEN=<GitHub token with read:packages>
+scripts/ecr_login.sh dev       # once per 12 hours; see "ECR access" below
 run.sh                         # dev; known defects reported, not gating
 run.sh --env prd               # what prd runs
 run.sh --include-known         # known defects that still fail also fail the run
@@ -81,15 +81,40 @@ for the `mongo:8.0.13` container behind the Sportsbook settlement and bet-stop e
    (`argocd/argocd-image-updater/<appsDir>/<app>/<env>.yaml`).
 2. For each .NET image (prefixes `oev2-`, `bg-`, `backoffice-`, `platform-`, minus the
    non-.NET ones in `deployment.NON_DOTNET_IMAGES`) it pulls
-   `$CONTRACT_REGISTRY/<image>:<tag>` (default `ghcr.io/flyingcockatoo`) for linux/amd64 and
+   `<registry>/<image>:<tag>` for linux/amd64 from the ECR registry CI pushes that
+   environment to (`CONTRACT_REGISTRY` overrides it), and
    copies `/app` into `.images/<env>/<image>/`. An image whose digest has not changed is not
    copied again.
 3. It prints each image's tag and commit (the `org.opencontainers.image.revision` label). That
    header says exactly what was tested.
 
-`CONTRACT_REGISTRY` can point at the ECR registries too
-(`172065883315.dkr.ecr.ap-south-1.amazonaws.com` for dev and stg,
-`525375333516.dkr.ecr.ap-east-1.amazonaws.com` for prd) after a `docker login` there.
+A tag argocd pins that is no longer in ECR (the lifecycle policy keeps the last 5 `-dev`
+images) is reported and skipped; `test_every_deployed_dotnet_image_is_extracted` then fails on it.
+Network calls time out and are retried twice.
+
+### ECR access
+
+| Environment | Registry | AWS account |
+|---|---|---|
+| dev, stg | `172065883315.dkr.ecr.ap-south-1.amazonaws.com` | plat-stg |
+| prd | `525375333516.dkr.ecr.ap-east-1.amazonaws.com` | plat-prd |
+
+Pulling needs an AWS SSO role that can read ECR in that account. The `developers` group gets
+`EKSPowerUserAccess` (which includes `ReadOnlyAccess`) on plat-stg; see
+`infrastructure/docs/eks-access.md`. Add a profile to `~/.aws/config`:
+
+```ini
+[profile song88-plat-stg]
+sso_start_url = https://d-9667bfe8f0.awsapps.com/start
+sso_region = ap-southeast-1
+sso_account_id = 172065883315
+sso_role_name = EKSPowerUserAccess
+region = ap-south-1
+```
+
+then `scripts/ecr_login.sh dev`. It runs `aws sso login` and `aws ecr get-login-password`
+through the `aws` CLI, or the `amazon/aws-cli` image when the CLI is not installed. The SSO
+session lasts 2 hours and the docker login 12.
 
 To run one part on its own, after one `run.sh`:
 
@@ -199,4 +224,6 @@ gets a backlog ticket to cite (GM-962, deferred in GM-959; decision in bet-geniu
 ## CI
 
 Not wired yet (DEVOPS-442). A workflow here no longer needs the other repos checked out: only
-a token that can read the GHCR packages and the `argocd` and `infrastructure` repos.
+an AWS role that can pull from ECR (the `github-oidc-ecr-push-role` pattern in
+`infrastructure/live/aws-plat-*/global`, read-only) and a token that can read `argocd` and
+`infrastructure`.

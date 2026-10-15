@@ -1,6 +1,6 @@
 """Pull the images deployed in an environment and copy each one's /app out of it.
 
-    uv run python scripts/pull_images.py --env dev [--registry ghcr.io/flyingcockatoo]
+    uv run python scripts/pull_images.py --env dev [--registry REGISTRY]
                                          [--tag IMAGE=TAG ...] [--list | --show]
 
 1. Downloads argocd and infrastructure at CONTRACT_CONFIG_REF (default main) through the
@@ -11,7 +11,8 @@
    An image whose digest matches the last extraction is not copied again.
 4. Writes .images/<env>/manifest.json: ref, tag, digest and the commit (OCI revision label).
 
-The registry login is the caller's: run.sh logs in to ghcr.io with CONTRACT_REGISTRY_TOKEN.
+Images come from the ECR registry CI pushes to for that environment (REGISTRIES; infrastructure
+live/aws-plat-{stg,prd}/*/ecr-repos). The docker login is the caller's: scripts/ecr_login.sh.
 """
 
 import argparse
@@ -28,7 +29,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "routing"))
 import deployment  # noqa: E402
 import sources  # noqa: E402
 
-DEFAULT_REGISTRY = "ghcr.io/flyingcockatoo"
+# Where CI pushes each environment's images: dev and stg builds go to the plat-stg account, prd
+# releases to plat-prd (each repo's ci.yml "Set environment" step).
+REGISTRIES = {
+    "dev": "172065883315.dkr.ecr.ap-south-1.amazonaws.com",
+    "stg": "172065883315.dkr.ecr.ap-south-1.amazonaws.com",
+    "prd": "525375333516.dkr.ecr.ap-east-1.amazonaws.com",
+}
 NOT_FOUND = re.compile(r"no such manifest|manifest unknown|not found", re.IGNORECASE)
 
 
@@ -70,7 +77,7 @@ def extract(ref: str, target: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env", choices=deployment.ENVIRONMENTS, default="dev")
-    parser.add_argument("--registry", default=DEFAULT_REGISTRY)
+    parser.add_argument("--registry", help="default: the environment's ECR registry (REGISTRIES)")
     parser.add_argument("--tag", action="append", default=[], metavar="IMAGE=TAG",
                         help="test this tag instead of the one argocd pins")
     parser.add_argument("--list", action="store_true", help="print the images and stop")
@@ -78,6 +85,7 @@ def main() -> int:
                         help="print what .images/<env> holds now, without fetching anything")
     args = parser.parse_args()
     overrides = dict(t.split("=", 1) for t in args.tag)
+    registry = args.registry or REGISTRIES[args.env]
 
     if args.show:
         for name in sources.CONFIG_REPOS:
@@ -104,7 +112,7 @@ def main() -> int:
     manifest = {}
     missing = []
     for image, tag in images.items():
-        ref = f"{args.registry}/{image}:{tag}"
+        ref = f"{registry}/{image}:{tag}"
         # A tag ArgoCD pins can be gone from the registry (ECR keeps the last 5 -dev images).
         # That is a finding, not a reason to stop: the image is left out, and
         # test_every_deployed_dotnet_image_is_extracted reports it.

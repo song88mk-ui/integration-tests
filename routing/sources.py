@@ -48,7 +48,8 @@ def run(args: list[str], timeout: int, attempts: int = 3, **kwargs) -> subproces
 
 def not_retryable(stderr: str) -> bool:
     """A missing tag or a refused login will not change on a retry."""
-    return bool(re.search(r"no such manifest|manifest unknown|not found|unauthorized|denied", stderr, re.IGNORECASE))
+    return bool(re.search(r"no such manifest|manifest unknown|not found|unauthorized|denied|no basic auth",
+                          stderr, re.IGNORECASE))
 
 
 def config_ref() -> str:

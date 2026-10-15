@@ -20,10 +20,10 @@
 #        --tag            test this tag of an image instead of the one ArgoCD pins
 #        --include-known  a known-defect checker that still fails also fails the run
 #                         (use it to confirm a fix)
-# Env:   CONTRACT_REGISTRY        registry holding the images (default ghcr.io/flyingcockatoo)
-#        CONTRACT_REGISTRY_TOKEN  token to log in with (for ghcr.io, a GitHub token with
-#                                 read:packages); unset means docker is already logged in
-#        CONTRACT_CONFIG_REF      argocd/infrastructure ref to read (default main)
+# Env:   CONTRACT_REGISTRY    registry holding the images (default: the environment's ECR
+#                             registry, see scripts/pull_images.py). Docker must be logged in to
+#                             it: scripts/ecr_login.sh <env>.
+#        CONTRACT_CONFIG_REF  argocd/infrastructure ref to read (default main)
 #        gh must be authenticated: argocd and infrastructure are read through the GitHub API.
 set -euo pipefail
 
@@ -67,18 +67,14 @@ esac
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 sln="$here/harness/ContractTests.sln"
 images="$here/.images/$env"
-registry="${CONTRACT_REGISTRY:-ghcr.io/flyingcockatoo}"
 export CONTRACT_GOLDEN_DIR="$here/goldens"
 export CONTRACT_ENVS="$env"
 cd "$here"
 
 echo "== Images under test ($env)"
 if [[ $pull -eq 1 ]]; then
-    if [[ -n "${CONTRACT_REGISTRY_TOKEN:-}" ]]; then
-        # Any non-empty user name works with a GitHub token on ghcr.io.
-        docker login "${registry%%/*}" -u token --password-stdin <<<"$CONTRACT_REGISTRY_TOKEN" >/dev/null
-    fi
-    uv run --frozen python scripts/pull_images.py --env "$env" --registry "$registry" "${pull_args[@]}"
+    [[ -n "${CONTRACT_REGISTRY:-}" ]] && pull_args+=(--registry "$CONTRACT_REGISTRY")
+    uv run --frozen python scripts/pull_images.py --env "$env" "${pull_args[@]}"
 elif [[ ! -f "$images/manifest.json" ]]; then
     echo "--no-pull, but $images/manifest.json does not exist. Run once without --no-pull." >&2
     exit 1
