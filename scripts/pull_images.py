@@ -16,6 +16,7 @@ The registry login is the caller's: run.sh logs in to ghcr.io with CONTRACT_REGI
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -28,12 +29,11 @@ import deployment  # noqa: E402
 import sources  # noqa: E402
 
 DEFAULT_REGISTRY = "ghcr.io/flyingcockatoo"
+NOT_FOUND = re.compile(r"no such manifest|manifest unknown|not found", re.IGNORECASE)
 
 
-def docker(*args: str, capture: bool = True) -> str:
-    result = subprocess.run(["docker", *args], check=True, text=True,
-                            capture_output=capture)
-    return result.stdout.strip() if capture else ""
+def docker(*args: str, timeout: int = 120) -> str:
+    return sources.run(["docker", *args], timeout=timeout, text=True, capture_output=True).stdout.strip()
 
 
 def deployed_images(env: str, overrides: dict[str, str]) -> dict[str, str]:
@@ -59,7 +59,7 @@ def extract(ref: str, target: Path) -> None:
     container = docker("create", "--platform", "linux/amd64", ref)
     try:
         with tempfile.TemporaryDirectory(dir=target.parent) as tmp:
-            docker("cp", f"{container}:/app", tmp)
+            docker("cp", f"{container}:/app", tmp, timeout=600)
             if target.exists():
                 shutil.rmtree(target)
             (Path(tmp) / "app").rename(target)
@@ -102,9 +102,21 @@ def main() -> int:
     manifest_file = env_dir / "manifest.json"
     previous = json.loads(manifest_file.read_text()) if manifest_file.is_file() else {}
     manifest = {}
+    missing = []
     for image, tag in images.items():
         ref = f"{args.registry}/{image}:{tag}"
-        docker("pull", "--quiet", "--platform", "linux/amd64", ref)
+        # A tag ArgoCD pins can be gone from the registry (ECR keeps the last 5 -dev images).
+        # That is a finding, not a reason to stop: the image is left out, and
+        # test_every_deployed_dotnet_image_is_extracted reports it.
+        # A pull that stalls on a dead connection is killed and retried; a missing tag is not.
+        try:
+            docker("pull", "--quiet", "--platform", "linux/amd64", ref, timeout=900)
+        except subprocess.CalledProcessError as error:
+            if not NOT_FOUND.search(error.stderr or ""):
+                raise
+            missing.append(ref)
+            print(f"   !! {image}: {tag} is pinned by argocd but not in the registry", flush=True)
+            continue
         digest = docker("image", "inspect", "--format", "{{index .RepoDigests 0}}", ref)
         revision = docker("image", "inspect", "--format",
                           '{{index .Config.Labels "org.opencontainers.image.revision"}}', ref)
@@ -118,6 +130,8 @@ def main() -> int:
     for stale in sorted(set(previous) - set(manifest)):
         shutil.rmtree(env_dir / stale, ignore_errors=True)
     manifest_file.write_text(json.dumps(manifest, indent=2) + "\n")
+    if missing:
+        print(f"   !! {len(missing)} deployed image(s) missing from the registry: {' '.join(missing)}")
     return 0
 
 

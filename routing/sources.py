@@ -11,9 +11,11 @@
 
 import json
 import os
+import re
 import subprocess
 import tarfile
 import tempfile
+import time
 from functools import cache
 from pathlib import Path
 
@@ -24,24 +26,55 @@ CONFIG_REPOS = ("argocd", "infrastructure")
 ORG = "FlyingCockatoo"
 
 
+def run(args: list[str], timeout: int, attempts: int = 3, **kwargs) -> subprocess.CompletedProcess:
+    """subprocess.run with check=True, a timeout, and retries: a dropped connection should
+    cost a retry, not the whole run (a docker pull hung for 18 minutes on 2026-10-15)."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return subprocess.run(args, check=True, timeout=timeout, **kwargs)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            stderr = getattr(error, "stderr", None) or ""
+            if isinstance(error, subprocess.CalledProcessError) and not_retryable(stderr):
+                raise
+            detail = (getattr(error, "stderr", None) or "").strip().splitlines()[-1:] or [type(error).__name__]
+            if attempt == attempts:
+                print(f"   !! {' '.join(args)}: {detail[0]}", flush=True)
+                raise
+            print(f"   !! {' '.join(args[:3])} failed ({detail[0]}), retry {attempt}/{attempts - 1}",
+                  flush=True)
+            time.sleep(5 * attempt)
+    raise AssertionError("unreachable")
+
+
+def not_retryable(stderr: str) -> bool:
+    """A missing tag or a refused login will not change on a retry."""
+    return bool(re.search(r"no such manifest|manifest unknown|not found|unauthorized|denied", stderr, re.IGNORECASE))
+
+
 def config_ref() -> str:
     return os.environ.get("CONTRACT_CONFIG_REF") or "main"
 
 
 def fetch_config(name: str, ref: str) -> str:
     """Download repo name at ref into .cache/config/<name>/ and return the commit SHA."""
-    sha = subprocess.run(
-        ["gh", "api", f"repos/{ORG}/{name}/commits/{ref}", "--jq", ".sha"],
-        check=True, capture_output=True, text=True,
-    ).stdout.strip()
+    sha = run(["gh", "api", f"repos/{ORG}/{name}/commits/{ref}", "--jq", ".sha"],
+              timeout=60, capture_output=True, text=True).stdout.strip()
     target = CONFIG_DIR / name
     if (CONFIG_DIR / f"{name}.sha").is_file() and (CONFIG_DIR / f"{name}.sha").read_text().strip() == sha:
         return sha
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=CONFIG_DIR) as tmp:
         archive = Path(tmp) / "repo.tar.gz"
-        with archive.open("wb") as out:
-            subprocess.run(["gh", "api", f"repos/{ORG}/{name}/tarball/{sha}"], check=True, stdout=out)
+        for attempt in range(3):
+            with archive.open("wb") as out:
+                try:
+                    subprocess.run(["gh", "api", f"repos/{ORG}/{name}/tarball/{sha}"],
+                                   check=True, stdout=out, timeout=300)
+                    break
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                    if attempt == 2:
+                        raise
+                    time.sleep(5 * (attempt + 1))
         extracted = Path(tmp) / "x"
         with tarfile.open(archive) as tar:
             tar.extractall(extracted, filter="data")
